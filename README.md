@@ -105,8 +105,9 @@ rm cmdline.txt
 ```bash
 cat << EOF > boot_cmd.txt
 fatload mmc 0:1 \${kernel_addr_r} Image
+fatload mmc 0:1 \${ramdisk_addr_r} uRamdisk
 fatload mmc 0:1 \${fdt_addr} bcm2710-rpi-zero-2-w.dtb
-booti \${kernel_addr_r} - \${fdt_addr}
+booti \${kernel_addr_r} \${ramdisk_addr_r} \${fdt_addr}
 EOF
 
 ~/u-boot/tools/mkimage -A arm64 -O linux -T script -C none -d boot_cmd.txt boot.scr
@@ -118,8 +119,7 @@ rm boot_cmd.txt boot.scr
 ```
 - up to here your board should boot up and kernel starts normally but as we do not add Root filesystem, it ends up with panic
 
-
-## Root filesystem
+# Root filesystem (Staging Area)
 ```bash
 cd ~
 mkdir rootfs
@@ -139,16 +139,14 @@ sudo chown -R root:root *
 ## Busybox
 ```bash
 cd ~
-
-# Download the latest source code
-wget https://busybox.net/downloads/busybox-1.36.1.tar.bz2
-tar xf busybox-1.36.1.tar.bz2
-rm busybox-1.36.1.tar.bz2
-cd busybox-1.36.1/
+git clone git://busybox.net/busybox.git
+cd busybox
+git checkout 1_36_1             # latest stable version
 
 # Config
+make distclean
 CROSS_COMPILE=${HOME}/x-tools/aarch64-rpizero2w-linux-gnu/bin/aarch64-rpizero2w-linux-gnu-
-make CROSS_COMPILE="$CROSS_COMPILE" defconfig
+make ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" defconfig
 # Change the install directory to be the one just created
 # Note that you should change usename in this command
 sed -i 's%^CONFIG_PREFIX=.*$%CONFIG_PREFIX="/home/cloner/rootfs"%' .config
@@ -160,12 +158,26 @@ make CROSS_COMPILE="$CROSS_COMPILE"
 # Use sudo because the directory is now owned by root
 sudo make CROSS_COMPILE="$CROSS_COMPILE" install
 
-# Install required libraries
-readelf -a ~/rootfs/bin/busybox | grep -E "(program interpreter)|(Shared library)"
+```
+- Note that you can use ToyBox instead which is very often used in Android devices
+
+## Required Libraries
+You need to copy shared libraries from toolchain to the staging directory.
+```bash
+cd ~/rootfs
+PATH=$PATH:~/x-tools/aarch64-rpizero2w-linux-gnu/bin
+aarch64-rpizero2w-linux-gnu-readelf -a ~/rootfs/bin/busybox | grep -E "(program interpreter)|(Shared library)"
 export SYSROOT=$(~/x-tools/aarch64-rpizero2w-linux-gnu/bin/aarch64-rpizero2w-linux-gnu-gcc -print-sysroot)
 sudo cp -L ${SYSROOT}/lib64/{ld-linux-aarch64.so.1,libm.so.6,libresolv.so.2,libc.so.6} ~/rootfs/lib64/
+```
+## Size Reduction
+We can reduce size of libraries and programs by stripping the binaries of symbol tables
+```bash
+sudo ~/x-tools/aarch64-rpizero2w-linux-gnu/bin/aarch64-rpizero2w-linux-gnu-strip ~/rootfs/lib64/*
+```
 
-# Create device nodes
+## Create device nodes
+```bash
 cd ~/rootfs
 sudo mknod -m 666 dev/null c 1 3
 sudo mknod -m 600 dev/console c 5 1
@@ -174,7 +186,7 @@ sudo mknod -m 600 dev/console c 5 1
 ## Boot with initramfs
 ```bash
 cd ~/rootfs
-find . | cpio -H newc -ov --owner root:root -F ../initramfs.cpio
+find . | cpio -H newc -ov --owner root:root > ../initramfs.cpio
 cd ..
 gzip initramfs.cpio
 ~/u-boot/tools/mkimage -A arm64 -O linux -T ramdisk -d initramfs.cpio.gz uRamdisk
