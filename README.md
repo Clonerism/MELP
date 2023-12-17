@@ -197,3 +197,4 @@ sudo cp uRamdisk /media/${USER}/boot/
 # clean up
 rm uRamdisk initramfs.cpio.gz
 ```
+- Note that this manual is NOT complete and should add some steps to it in future!
